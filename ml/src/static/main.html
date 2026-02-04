@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Panel Efficiency Predictor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --solar-yellow: #FFD700;
+            --solar-blue: #1E90FF;
+            --solar-green: #28A745;
+            --solar-red: #DC3545;
+            --solar-bg: #F8F9FA;
+        }
+        
+        body {
+            background-color: var(--solar-bg);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .hero {
+            background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://source.unsplash.com/random/1600x900/?solar-panel');
+            background-size: cover;
+            background-position: center;
+            color: white;
+            padding: 100px 0;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 3rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .card {
+            border: none;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .btn-primary {
+            background-color: var(--solar-blue);
+            border-color: var(--solar-blue);
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--solar-yellow);
+            border-color: var(--solar-yellow);
+            color: black;
+        }
+        
+        .progress {
+            height: 25px;
+            border-radius: 12px;
+        }
+        
+        .explanation-item {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: transform 0.2s;
+        }
+        
+        .explanation-item:hover {
+            transform: translateX(5px);
+        }
+        
+        .positive {
+            background-color: rgba(40,167,69,0.1);
+            border-left: 4px solid var(--solar-green);
+        }
+        
+        .negative {
+            background-color: rgba(220,53,69,0.1);
+            border-left: 4px solid var(--solar-red);
+        }
+        
+        #shapChart {
+            max-height: 400px;
+        }
+        
+        .loading-spinner {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="#">
+                <i class="fas fa-solar-panel me-2 text-warning"></i>Solar Efficiency Predictor
+            </a>
+        </div>
+    </nav>
+    
+    <section class="hero">
+        <div class="container">
+            <h1>Unlock Solar Panel Insights</h1>
+            <p class="lead">Predict efficiency, assess risks, and get AI explanations in seconds!</p>
+        </div>
+    </section>
+    
+    <section class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-6">
+                <div class="card p-4">
+                    <h4 class="text-center mb-4">Enter Panel Conditions</h4>
+                    <form id="predictForm">
+                        <div class="mb-3">
+                            <label for="temperature" class="form-label">Temperature (°C)</label>
+                            <input type="number" class="form-control" id="temperature" value="25" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="humidity" class="form-label">Humidity (%)</label>
+                            <input type="number" class="form-control" id="humidity" value="60" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="irradiance" class="form-label">Irradiance (W/m²)</label>
+                            <input type="number" class="form-control" id="irradiance" value="800" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-bolt me-2"></i>Predict Efficiency
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="container my-5" id="resultsSection" style="display: none;">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="card p-4">
+                    <h4 class="text-center mb-4">Prediction Results</h4>
+                    <div class="loading-spinner" id="loading">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p>Analyzing...</p>
+                    </div>
+                    <div id="resultsContent" style="display: none;">
+                        <div class="mb-4">
+                            <h5>Efficiency Score</h5>
+                            <div class="progress">
+                                <div id="efficiencyBar" class="progress-bar bg-success" role="progressbar"></div>
+                            </div>
+                            <p class="mt-2 text-center" id="efficiencyText"></p>
+                        </div>
+                        <div class="mb-4">
+                            <h5>Risk Score</h5>
+                            <div class="progress">
+                                <div id="riskBar" class="progress-bar bg-danger" role="progressbar"></div>
+                            </div>
+                            <p class="mt-2 text-center" id="riskText"></p>
+                        </div>
+                        <div class="mb-4">
+                            <h5>Recommended Action</h5>
+                            <div class="alert alert-info" id="actionText"></div>
+                        </div>
+                        <div class="mb-4">
+                            <h5>Feature Impact (SHAP Explanation)</h5>
+                            <canvas id="shapChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <footer class="bg-dark text-white text-center py-3">
+        <p>&copy; 2026 Solar Efficiency MVP | Built for Hackathon</p>
+    </footer>
+    
+    <script>
+        const form = document.getElementById('predictForm');
+        const resultsSection = document.getElementById('resultsSection');
+        const loading = document.getElementById('loading');
+        const resultsContent = document.getElementById('resultsContent');
+        let shapChart = null;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            resultsSection.style.display = 'block';
+            loading.style.display = 'block';
+            resultsContent.style.display = 'none';
+            
+            const data = {
+                temperature: parseFloat(document.getElementById('temperature').value),
+                humidity: parseFloat(document.getElementById('humidity').value),
+                irradiance: parseFloat(document.getElementById('irradiance').value)
+            };
+            
+            try {
+                const response = await fetch('http://localhost:5001/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+                
+                const result = await response.json();
+                
+                // Efficiency
+                const effPercent = result.predicted_efficiency * 100;
+                document.getElementById('efficiencyBar').style.width = `${effPercent}%`;
+                document.getElementById('efficiencyBar').setAttribute('aria-valuenow', effPercent);
+                document.getElementById('efficiencyText').textContent = `${result.predicted_efficiency.toFixed(3)} (Efficiency Rating)`;
+                
+                // Risk
+                document.getElementById('riskBar').style.width = `${result.risk_score}%`;
+                document.getElementById('riskBar').setAttribute('aria-valuenow', result.risk_score);
+                document.getElementById('riskText').textContent = `${result.risk_score}% Risk`;
+                
+                // Action
+                document.getElementById('actionText').textContent = result.recommended_action;
+                
+                // SHAP Chart
+                if (shapChart) shapChart.destroy();
+                const ctx = document.getElementById('shapChart').getContext('2d');
+                
+                const features = Object.keys(result.explanation);
+                const values = Object.values(result.explanation);
+                const colors = values.map(v => v > 0 ? 'rgba(40,167,69,0.8)' : 'rgba(220,53,69,0.8)');
+                
+                shapChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: features,
+                        datasets: [{
+                            label: 'Impact on Efficiency',
+                            data: values,
+                            backgroundColor: colors,
+                            borderColor: colors.map(c => c.replace('0.8', '1')),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        scales: {
+                            x: {
+                                beginAtZero: true,
+                                title: { display: true, text: 'SHAP Value (Impact)' }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+                
+                loading.style.display = 'none';
+                resultsContent.style.display = 'block';
+                resultsSection.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                alert('Error: ' + error.message);
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
