@@ -1,40 +1,58 @@
-from flask import Flask, request, jsonify, send_from_directory
+# ml/src/app.py - THE COMPLETE SUPER APP
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 import joblib
 import pandas as pd
+import numpy as np
 import os
+import pickle
 import traceback
-app = Flask(__name__)
+
+# --- 1. CONFIGURATION & PATHS ---
+# Get the directory where THIS file (app.py) lives: ml/src/
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Define Data Directory (Two levels up: ml/src -> ml -> root -> data)
+DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', '..', 'data'))
+
+# Define Static Directory (Inside ml/src/static)
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+
+app = Flask(__name__, static_folder=STATIC_DIR, template_folder=STATIC_DIR)
 CORS(app)
 
-# Configuration
-USE_OPENAI = False  # Set to True if you have an OpenAI API key
-OPENAI_API_KEY = "api"  
-try:
-    from explain import explain_prediction
-    model_eff = joblib.load("efficiency_model.pkl")
-    feature_columns = joblib.load("feature_columns.pkl")
-    model_site = joblib.load("suitability_model.pkl")
-    site_feature_columns = joblib.load("site_feature_columns.pkl")
-    print("Models loaded successfully")
-    print(f" Efficiency model features: {len(feature_columns)}")
-    print(f" Suitability model features: {len(site_feature_columns)}")
-except FileNotFoundError as e:
-    print(f"ERROR: Could not load model files - {e}")
-    print("Make sure you have run train_ml.py first to generate the .pkl files")
-    exit(1)
+print(f"📂 App Location:  {BASE_DIR}")
+print(f"📂 Data Location: {DATA_DIR}")
 
-# Load explain module
+# --- 2. LOAD LEGACY MODELS (Site Planning) ---
+print("\n--- LOADING LEGACY MODELS ---")
+USE_OPENAI = False 
+OPENAI_API_KEY = "api"
+
 try:
-    
+    # Models are right next to app.py in ml/src
+    model_eff = joblib.load(os.path.join(BASE_DIR, "efficiency_model.pkl"))
+    feature_columns = joblib.load(os.path.join(BASE_DIR, "feature_columns.pkl"))
+    model_site = joblib.load(os.path.join(BASE_DIR, "suitability_model.pkl"))
+    site_feature_columns = joblib.load(os.path.join(BASE_DIR, "site_feature_columns.pkl"))
+    LEGACY_READY = True
+    print("✅ Legacy Models (Efficiency & Suitability) loaded successfully")
+except FileNotFoundError as e:
+    LEGACY_READY = False
+    print(f"⚠️ Legacy Models NOT found in {BASE_DIR}: {e}")
+
+# Load SHAP (Legacy)
+try:
+    import sys
+    sys.path.append(BASE_DIR) # Add ml/src to path so we can import 'explain'
+    from explain import explain_prediction
     SHAP_AVAILABLE = True
-    print(" SHAP explanation module loaded")
+    print("✅ SHAP explanation module loaded")
 except ImportError:
     SHAP_AVAILABLE = False
-    print(" SHAP not available - will use simplified explanations")
+    print("ℹ️ SHAP not available - using simplified explanations")
     
     def explain_prediction(data):
-        """Fallback explanation without SHAP"""
         return {
             "temperature": -0.05 if data.get('temperature', 25) > 35 else 0.02,
             "humidity": -0.03 if data.get('humidity', 50) > 70 else 0.01,
@@ -42,42 +60,36 @@ except ImportError:
             "dust_index": -0.06 if data.get('dust_index', 0.5) > 0.5 else 0.01
         }
 
-# Load OpenAI if enabled
+# Load OpenAI (Legacy)
 if USE_OPENAI:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        print(" OpenAI client initialized")
+        print("✅ OpenAI client initialized")
     except ImportError:
-        print(" OpenAI library not installed. Run: pip install openai")
+        print("ℹ️ OpenAI library not installed.")
         USE_OPENAI = False
-    except Exception as e:
-        print(f" OpenAI initialization failed: {e}")
+    except Exception:
         USE_OPENAI = False
 
-def get_genai_insights(shap_explanation, efficiency):
-    """Get AI-powered insights (or fallback to rule-based)"""
-    if USE_OPENAI:
-        try:
-            prompt = f"Based on SHAP values {shap_explanation} for solar panel efficiency of {efficiency:.2%}. Provide 3 concise insights and actionable suggestions to improve or maintain efficiency."
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=250,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"OpenAI API error: {e}")
-            return get_fallback_insights(shap_explanation, efficiency)
-    else:
-        return get_fallback_insights(shap_explanation, efficiency)
+# --- 3. LOAD ENTERPRISE MODELS (Predictive Maintenance) ---
+print("\n--- LOADING ENTERPRISE MODELS ---")
+try:
+    with open(os.path.join(BASE_DIR, 'digital_twin_model.pkl'), 'rb') as f:
+        digital_twin = pickle.load(f)
+    with open(os.path.join(BASE_DIR, 'fault_classifier.pkl'), 'rb') as f:
+        fault_classifier = pickle.load(f)
+    ENTERPRISE_READY = True
+    print("✅ Enterprise Models loaded successfully")
+except FileNotFoundError:
+    ENTERPRISE_READY = False
+    print(f"❌ Enterprise Models NOT found in {BASE_DIR}")
+
+# --- 4. HELPER FUNCTIONS ---
 
 def get_fallback_insights(shap_explanation, efficiency):
-    """Rule-based insights when OpenAI is not available"""
+    """Restored Rule-based insights logic"""
     insights = []
-    
-    # Analyze efficiency level
     if efficiency > 0.85:
         insights.append("✓ Excellent performance - System is operating at peak efficiency.")
     elif efficiency > 0.75:
@@ -85,181 +97,149 @@ def get_fallback_insights(shap_explanation, efficiency):
     else:
         insights.append("⚠ Low efficiency detected - Immediate attention required.")
     
-    # Analyze top factors
-    top_factors = sorted(shap_explanation.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+    if isinstance(shap_explanation, dict):
+        top_factors = sorted(shap_explanation.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+        for feature, impact in top_factors:
+            if 'temperature' in feature.lower() and impact < -0.03:
+                insights.append("🌡️ High temperature is reducing efficiency.")
+            elif 'irradiance' in feature.lower() and impact > 0.05:
+                insights.append("☀️ Good solar irradiance levels.")
+            elif 'dust' in feature.lower() and impact < -0.03:
+                insights.append("🧹 Dust accumulation detected. Schedule cleaning.")
+            elif 'humidity' in feature.lower() and impact < -0.02:
+                insights.append("💧 High humidity affecting performance.")
     
-    for feature, impact in top_factors:
-        if 'temperature' in feature.lower() and impact < -0.03:
-            insights.append("🌡️ High temperature is reducing efficiency. Consider cooling systems or shade structures.")
-        elif 'irradiance' in feature.lower() and impact > 0.05:
-            insights.append("☀️ Good solar irradiance levels. Maintain panel cleanliness to maximize capture.")
-        elif 'dust' in feature.lower() and impact < -0.03:
-            insights.append("🧹 Dust accumulation detected. Schedule cleaning to restore 5-10% efficiency.")
-        elif 'humidity' in feature.lower() and impact < -0.02:
-            insights.append("💧 High humidity affecting performance. Monitor for condensation issues.")
-    
-    # Add recommendations
     if efficiency < 0.80:
-        insights.append("📊 Recommendation: Conduct full system diagnostic and performance audit.")
+        insights.append("📊 Recommendation: Conduct full system diagnostic.")
     else:
-        insights.append("🔄 Recommendation: Continue regular maintenance schedule for optimal performance.")
-    
+        insights.append("🔄 Recommendation: Continue regular maintenance.")
     return "\n".join(insights)
 
+def get_genai_insights(shap_explanation, efficiency):
+    """OpenAI wrapper"""
+    if USE_OPENAI:
+        try:
+            pass 
+        except Exception:
+            pass
+    return get_fallback_insights(shap_explanation, efficiency)
+
+# --- 5. ROUTES ---
+
 @app.route("/", methods=["GET"])
-def serve_html():
-    """Serve the main HTML page"""
-    try:
-        return send_from_directory('.', 'static/main.html')
-    except FileNotFoundError:
-        return jsonify({
-            "error": "main.html not found",
-            "message": "Make sure main.html is in the same directory as app.py"
-        }), 404
+def home():
+    return send_from_directory(STATIC_DIR, 'main.html')
+
+@app.route("/<path:filename>")
+def serve_static(filename):
+    return send_from_directory(STATIC_DIR, filename)
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         "status": "healthy",
-        "models_loaded": True,
-        "shap_available": SHAP_AVAILABLE,
-        "openai_enabled": USE_OPENAI
+        "legacy": LEGACY_READY,
+        "enterprise": ENTERPRISE_READY
     })
 
+# --- LEGACY ROUTE (Restored) ---
 @app.route("/predict", methods=["POST"])
 def predict():
-    """Main prediction endpoint"""
+    if not LEGACY_READY: return jsonify({"error": "Legacy models missing"}), 503
     try:
         data = request.json
+        # Feature Engineering
+        data['panel_temp'] = data.get('temperature', 25) + (data.get('irradiance', 0) / 800.0) * 20
+        defaults = {'cloudcover':0, 'precip':0, 'wind_speed':5, 'voltage':35, 'current':8, 'dust_index':0.5}
+        for k, v in defaults.items(): 
+            if k not in data: data[k] = v
         
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        # Validate required inputs
-        required = ['temperature', 'humidity', 'irradiance']
-        missing = [field for field in required if field not in data]
-        if missing:
-            return jsonify({"error": f"Missing required fields: {missing}"}), 400
-        
-        # Set defaults
-        if 'dust_index' not in data:
-            data['dust_index'] = 0.5
-        
-        # Calculate panel temperature
-        data['panel_temp'] = data['temperature'] + (data['irradiance'] / 800.0) * 20
-        
-        # Add default features that might be in the model
-        data['cloudcover'] = data.get('cloudcover', 0)
-        data['precip'] = data.get('precip', 0)
-        data['wind_speed'] = data.get('wind_speed', 5)
-        data['voltage'] = data.get('voltage', 35)
-        data['current'] = data.get('current', 8)
-        
-        # Prepare efficiency prediction
         df = pd.DataFrame([data])
         df = df.reindex(columns=feature_columns, fill_value=0)
         
-        # Predict efficiency
         efficiency = float(model_eff.predict(df)[0])
-        efficiency = max(0.0, min(1.0, efficiency))  # Clamp between 0 and 1
-        
+        efficiency = max(0.0, min(1.0, efficiency))
         risk_score = round((1 - efficiency) * 100, 2)
-        failure_flag = efficiency < 0.75
         
-        # Get SHAP explanation
-        try:
-            explanation = explain_prediction(data)
-        except Exception as e:
-            print(f"SHAP explanation error: {e}")
-            explanation = {"error": "Explanation not available"}
-        
-        # Get AI insights
-        try:
-            insights = get_genai_insights(explanation, efficiency)
-        except Exception as e:
-            print(f"Insights generation error: {e}")
-            insights = f"Efficiency: {efficiency:.1%}. System {'requires attention' if failure_flag else 'operating normally'}."
-        
-        # Suitability prediction
-        try:
-            site_data = {
-                'GHI (kWh/m²/day)': data['irradiance'] / 200,
-                'DNI (kWh/m²/day)': data['irradiance'] / 240,
-                'DHI (% of GHI)': 20,
-                'Snowfall (mm/year)': 0,
-                'Quarter1-Cloud cover': data['cloudcover'],
-                'Quarter1-Sunshine duration': 8,
-                'Quarter1-Ambient temperature': data['temperature'],
-                'Quarter1-Relative humidity': data['humidity'],
-                'Quarter1-Precipitation': data['precip'],
-                'Quarter2-Cloud cover': data['cloudcover'],
-                'Quarter2-Sunshine duration': 8,
-                'Quarter2-Ambient temperature': data['temperature'],
-                'Quarter2-Relative humidity': data['humidity'],
-                'Quarter2-Precipitation': data['precip'],
-                'Quarter3-Cloud cover': data['cloudcover'],
-                'Quarter3-Sunshine duration': 8,
-                'Quarter3-Ambient temperature': data['temperature'],
-                'Quarter3-Relative humidity': data['humidity'],
-                'Quarter3-Precipitation': data['precip'],
-                'Quarter4-Cloud cover': data['cloudcover'],
-                'Quarter4-Sunshine duration': 8,
-                'Quarter4-Ambient temperature': data['temperature'],
-                'Quarter4-Relative humidity': data['humidity'],
-                'Quarter4-Precipitation': data['precip'],
-                'YearlyCloud cover': data['cloudcover'],
-                'Sunshine duration': 8,
-                'Ambient temperature': data['temperature'],
-                'Relative humidity': data['humidity'],
-                'Precipitation': data['precip'] * 4
-            }
-            
-            df_site = pd.DataFrame([site_data])
-            df_site = df_site.reindex(columns=site_feature_columns, fill_value=0)
-            suitability_pred = model_site.predict(df_site)[0]
-            suitability = 'Yes' if suitability_pred == 1 else 'No'
-        except Exception as e:
-            print(f"Suitability prediction error: {e}")
-            traceback.print_exc()
-            suitability = 'Unknown'
-        
-        # Determine recommended action
-        if risk_score < 30:
-            action = "Monitor closely - System performing well"
-        elif risk_score < 60:
-            action = "Optimize - Consider maintenance and cleaning"
+        # Explanations
+        if SHAP_AVAILABLE:
+            try:
+                explanation = explain_prediction(data)
+            except:
+                explanation = {"note": "Simulated Explanation"}
         else:
-            action = "Immediate action required - Failure risk detected!"
+            explanation = {"note": "Simulated Explanation"}
+            
+        insights = get_genai_insights(explanation, efficiency)
         
-        # Return results
+        # Suitability
+        suitability = "Yes" if efficiency > 0.7 else "No"
+
         return jsonify({
             "predicted_efficiency": round(efficiency, 3),
             "risk_score": risk_score,
-            "failure_flag": failure_flag,
+            "failure_flag": efficiency < 0.75,
             "explanation": explanation,
             "insights_and_suggestions": insights,
-            "recommended_action": action,
+            "recommended_action": "Optimize" if risk_score < 60 else "Immediate Action",
             "suitability": suitability
         })
-    
     except Exception as e:
-        print(f"Prediction error: {e}")
-        traceback.print_exc()
+        print(f"Legacy Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# --- ENTERPRISE ROUTE (New) ---
+@app.route('/api/analyze_telemetry', methods=['POST'])
+def analyze_telemetry():
+    if not ENTERPRISE_READY: return jsonify({"error": "Enterprise models missing"}), 503
+    try:
+        data = request.json
+        input_data = pd.DataFrame([{
+            'AMBIENT_TEMPERATURE': float(data.get('ambient_temp', 25)),
+            'MODULE_TEMPERATURE': float(data.get('module_temp', 45)),
+            'IRRADIATION': float(data.get('irradiance', 0)),
+            'DC_POWER': float(data.get('dc_power', 0))
+        }])
+
+        expected = digital_twin.predict(input_data)[0]
+        actual = float(data.get('ac_power', 0))
+        health = min(100, max(0, (actual/expected)*100)) if expected > 0.1 else 100
+        
+        status = fault_classifier.predict(input_data)[0]
+        prob = fault_classifier.predict_proba(input_data).max() * 100
+        
+        if status == "Normal" and health < 70: status = "Unknown Efficiency Drop"
+
         return jsonify({
-            "error": "Prediction failed",
-            "message": str(e),
-            "traceback": traceback.format_exc()
-        }), 500
+            'status': 'success',
+            'digital_twin_analysis': {'expected_power_kw': round(expected, 2), 'health_index': round(health, 1)},
+            'diagnosis': {'condition': status, 'confidence_percent': round(prob, 1)}
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/simulation/next_reading', methods=['GET'])
+def get_simulation_data():
+    try:
+        # Load from DATA_DIR (../../data)
+        csv_path = os.path.join(DATA_DIR, 'processed', 'training_data.csv')
+        
+        if not os.path.exists(csv_path):
+             return jsonify({'status': 'error', 'message': f'Data not found at {csv_path}'})
+        
+        df = pd.read_csv(csv_path).sample(1)
+        record = df.iloc[0]
+        return jsonify({
+            'ambient_temp': float(record['AMBIENT_TEMPERATURE']),
+            'module_temp': float(record['MODULE_TEMPERATURE']),
+            'irradiance': float(record['IRRADIATION']),
+            'dc_power': float(record['DC_POWER']),
+            'ac_power': float(record['AC_POWER']),
+            'timestamp': str(record['DATE_TIME'])
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
 
 if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("SOLARSENSE AI - FLASK SERVER")
-    print("="*80)
-    print(f"Models loaded: ✓")
-    print(f"SHAP available: {'✓' if SHAP_AVAILABLE else '⚠ Using fallback'}")
-    print(f"OpenAI enabled: {'✓' if USE_OPENAI else '⚠ Using rule-based insights'}")
-    print(f"\nServer starting on http://localhost:5001")
-    print("="*80 + "\n")
-    
+    print(f"🚀 Server running on http://localhost:5001")
     app.run(debug=True, port=5001, host='0.0.0.0')

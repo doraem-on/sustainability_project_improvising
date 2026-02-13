@@ -165,19 +165,20 @@ function update3DFromSliders() {
 function updateColorByEfficiency(efficiency) {
     if (!panel) return;
     
-    // Emissive Glow Logic
-    // High Efficiency (>0.8) = Green/Blue Glow
-    // Low Efficiency (<0.6) = Red Glow/Heat
-    
-    if (efficiency < 0.6) {
-        panel.material.emissive.setHex(0xff0000); // Red Warning
-        panel.material.emissiveIntensity = 0.3;
-    } else if (efficiency > 0.8) {
-        panel.material.emissive.setHex(0x00ff00); // Green Optimal
-        panel.material.emissiveIntensity = 0.1;
+    // reset emissive first
+    panel.material.emissiveIntensity = 0;
+
+    // Expert Glow Logic:
+    // Red glow for failures/low health (< 75%)
+    // Green pulse for optimal health (> 90%)
+    if (efficiency < 0.75) {
+        panel.material.emissive.setHex(0xff0000); // Red
+        panel.material.emissiveIntensity = 0.5;
+    } else if (efficiency > 0.90) {
+        panel.material.emissive.setHex(0x00ff00); // Green
+        panel.material.emissiveIntensity = 0.2;
     } else {
-        panel.material.emissive.setHex(0x000000); // No glow (Normal)
-        panel.material.emissiveIntensity = 0;
+        panel.material.emissive.setHex(0x000000); // Off
     }
 }
 

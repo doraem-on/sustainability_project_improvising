@@ -130,6 +130,17 @@
         .shap-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
         .shap-pos { color: var(--success); font-weight: bold; }
         .shap-neg { color: #dc3545; font-weight: bold; }
+
+        /* NEW: ENTERPRISE OVERLAY STYLES */
+        #enterprise-monitor {
+            position: absolute; top: 10px; right: 10px; width: 240px;
+            background: rgba(13, 110, 253, 0.9); color: white;
+            padding: 15px; border-radius: 10px; z-index: 10;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            font-size: 0.85rem; backdrop-filter: blur(5px);
+        }
+        .health-bar-bg { background: rgba(255,255,255,0.2); height: 8px; border-radius: 4px; margin: 10px 0; }
+        #health-bar-fill { background: #4CAF50; width: 100%; height: 100%; border-radius: 4px; transition: 0.5s; }
     </style>
 </head>
 <body>
@@ -201,10 +212,24 @@
             </div>
 
             <div class="col-lg-7 mb-4">
-                <div class="card h-100 border-0">
+                <div class="card h-100 border-0 position-relative">
                     <div class="card-header-custom">
                         <i class="fas fa-cube"></i> 3D Digital Twin
                     </div>
+
+                    <div id="enterprise-monitor">
+                        <div class="d-flex justify-content-between">
+                            <strong>Health Index</strong>
+                            <span id="health-pct">100%</span>
+                        </div>
+                        <div class="health-bar-bg"><div id="health-bar-fill"></div></div>
+                        <div class="mt-2 small">
+                            <strong>Status:</strong> <span id="telemetry-status" style="color: #4CAF50; font-weight: bold;">Operational</span><br>
+                            <strong>Diagnosis:</strong> <span id="telemetry-diag">Normal</span>
+                        </div>
+                        <button onclick="triggerSimulation()" class="btn btn-sm btn-light w-100 mt-2 fw-bold text-primary">📡 Simulate Live Feed</button>
+                    </div>
+
                     <div class="card-body p-0 d-flex flex-column">
                         <div id="canvas-container" style="flex-grow: 1;"></div> 
                         
@@ -316,7 +341,7 @@
         // --- 1. INITIALIZE ---
         window.onload = function() {
             init3D();
-            initDramaticBackground(); // NEW: DRAMATIC BACKGROUND
+            initDramaticBackground(); 
             initMap(); 
             
             const now = new Date();
@@ -328,7 +353,52 @@
             update3DFromSliders();
         };
 
-        // --- NEW: DRAMATIC INTERACTIVE BACKGROUND ---
+        // --- NEW: TELEMETRY SIMULATION LOGIC ---
+        async function triggerSimulation() {
+            try {
+                // 1. Fetch a random reading from the processed training data
+                const simRes = await fetch('/api/simulation/next_reading');
+                const simData = await simRes.json();
+                
+                if (simData.status === 'error') throw new Error(simData.message);
+
+                // 2. Send to Digital Twin for analysis
+                const analysisRes = await fetch('/api/analyze_telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(simData)
+                });
+                const result = await analysisRes.json();
+
+                // 3. Update the Enterprise Overlay UI
+                const health = result.digital_twin_analysis.health_index;
+                const statusEl = document.getElementById('telemetry-status');
+                const barFill = document.getElementById('health-bar-fill');
+
+                document.getElementById('health-pct').innerText = health + "%";
+                barFill.style.width = health + "%";
+                document.getElementById('telemetry-diag').innerText = result.diagnosis.condition;
+
+                if (health < 75) {
+                    statusEl.innerText = "MAINTENANCE REQ";
+                    statusEl.style.color = "#f44336";
+                    barFill.style.backgroundColor = "#f44336";
+                } else {
+                    statusEl.innerText = "OPERATIONAL";
+                    statusEl.style.color = "#4CAF50";
+                    barFill.style.backgroundColor = "#4CAF50";
+                }
+
+                // 4. Trigger 3D Glow (Grounded in legacy logic)
+                updateColorByEfficiency(health / 100);
+
+            } catch (err) {
+                console.error("Simulation failed:", err);
+                alert("Simulation Error: " + err.message);
+            }
+        }
+
+        // --- DRAMATIC INTERACTIVE BACKGROUND (Preserved) ---
         function initDramaticBackground() {
             const container = document.getElementById('bg-canvas');
             const bgScene = new THREE.Scene();
@@ -340,12 +410,10 @@
             bgRenderer.setSize(window.innerWidth, window.innerHeight);
             container.appendChild(bgRenderer.domElement);
 
-            // Particles Geometry
-            const particlesCount = 200; // More particles
+            const particlesCount = 200; 
             const geometry = new THREE.BufferGeometry();
             const positions = [];
             
-            // Create particles in a large spread
             for (let i = 0; i < particlesCount; i++) {
                 const x = (Math.random() - 0.5) * 400;
                 const y = (Math.random() - 0.5) * 400;
@@ -354,9 +422,8 @@
             }
             
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-
             const material = new THREE.PointsMaterial({
-                color: 0x0d6efd, // Blue
+                color: 0x0d6efd, 
                 size: 2,
                 transparent: true,
                 opacity: 0.8
@@ -365,16 +432,7 @@
             const particles = new THREE.Points(geometry, material);
             bgScene.add(particles);
 
-            // Lines connecting particles (Plexus Effect)
-            // Note: Doing this in pure ThreeJS is CPU heavy for 200 nodes, 
-            // so we will just animate the particle cloud aggressively for performance.
-
-            // MOUSE INTERACTION
-            let mouseX = 0;
-            let mouseY = 0;
-            let targetX = 0;
-            let targetY = 0;
-            
+            let mouseX = 0; let mouseY = 0;
             const windowHalfX = window.innerWidth / 2;
             const windowHalfY = window.innerHeight / 2;
 
@@ -385,17 +443,9 @@
 
             const animateBg = () => {
                 requestAnimationFrame(animateBg);
-
-                targetX = mouseX * 0.001;
-                targetY = mouseY * 0.001;
-
-                // Rotation driven by mouse
-                particles.rotation.y += 0.005 * (targetX - particles.rotation.y);
-                particles.rotation.x += 0.005 * (targetY - particles.rotation.x);
-
-                // Constant rotation
+                particles.rotation.y += 0.005 * ((mouseX * 0.001) - particles.rotation.y);
+                particles.rotation.x += 0.005 * ((mouseY * 0.001) - particles.rotation.x);
                 particles.rotation.z += 0.002; 
-
                 bgRenderer.render(bgScene, bgCamera);
             };
             animateBg();
@@ -407,172 +457,96 @@
             });
         }
 
-        // --- 2. MAP LOGIC ---
+        // --- MAP LOGIC (Preserved) ---
         function initMap() {
             map = L.map('map').setView([20.5937, 78.9629], 5);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
             map.on('click', function(e) {
-                const lat = e.latlng.lat;
-                const lon = e.latlng.lng;
-                
                 if (marker) marker.setLatLng(e.latlng);
                 else marker = L.marker(e.latlng).addTo(map);
-
-                fetchWeatherData(lat, lon);
+                fetchWeatherData(e.latlng.lat, e.latlng.lng);
             });
         }
 
         async function fetchWeatherData(lat, lon) {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,direct_radiation`;
-            
             try {
-                document.getElementById('temperature').parentElement.classList.add('opacity-50');
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,direct_radiation`;
                 const res = await fetch(url);
                 const data = await res.json();
-                
                 document.getElementById('temperature').value = data.current.temperature_2m;
                 document.getElementById('humidity').value = data.current.relative_humidity_2m;
                 document.getElementById('irradiance').value = data.current.direct_radiation || 800; 
-                
                 update3DFromSliders();
-                if(marker) marker.bindPopup(`<b>Weather Updated!</b><br>Temp: ${data.current.temperature_2m}°C<br>Irr: ${data.current.direct_radiation} W/m²`).openPopup();
-                
-            } catch (e) {
-                alert("Could not fetch weather data.");
-            } finally {
-                document.getElementById('temperature').parentElement.classList.remove('opacity-50');
-            }
+            } catch (e) { alert("Could not fetch weather data."); }
         }
 
-        // --- 3. SOLAR PANEL 3D SCENE ---
+        // --- SOLAR PANEL 3D SCENE (Preserved) ---
         function init3D() {
             const container = document.getElementById('canvas-container');
             if (!container) return;
-
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xeef2f3); 
-
             camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 1000);
             camera.position.set(0, 3, 6); 
             camera.lookAt(0, 0, 0);
-
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
             renderer.shadowMap.enabled = true;
-            container.innerHTML = ''; 
             container.appendChild(renderer.domElement);
-
             const groundGeo = new THREE.PlaneGeometry(20, 20);
             const groundMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
             const ground = new THREE.Mesh(groundGeo, groundMat);
-            ground.rotation.x = -Math.PI / 2;
-            ground.position.y = -1.5;
-            ground.receiveShadow = true;
-            scene.add(ground);
-
-            const geometry = new THREE.BoxGeometry(3, 0.1, 2);
-            const material = new THREE.MeshStandardMaterial({ 
-                color: 0x0d6efd, 
-                roughness: 0.2, 
-                metalness: 0.5
-            });
-            panel = new THREE.Mesh(geometry, material);
-            panel.castShadow = true;
-            scene.add(panel);
-
-            const standGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.5, 32);
-            const standMat = new THREE.MeshStandardMaterial({ color: 0x6c757d });
-            const stand = new THREE.Mesh(standGeo, standMat);
-            stand.position.y = -0.75;
-            scene.add(stand);
-
+            ground.rotation.x = -Math.PI / 2; ground.position.y = -1.5;
+            ground.receiveShadow = true; scene.add(ground);
+            panel = new THREE.Mesh(new THREE.BoxGeometry(3, 0.1, 2), new THREE.MeshStandardMaterial({ color: 0x0d6efd, roughness: 0.2, metalness: 0.5 }));
+            panel.castShadow = true; scene.add(panel);
+            const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.5, 32), new THREE.MeshStandardMaterial({ color: 0x6c757d }));
+            stand.position.y = -0.75; scene.add(stand);
             sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
-            sunLight.position.set(5, 10, 5);
-            sunLight.castShadow = true;
-            scene.add(sunLight);
-            
-            ambientLight = new THREE.AmbientLight(0x404040);
-            scene.add(ambientLight);
-
+            sunLight.position.set(5, 10, 5); sunLight.castShadow = true; scene.add(sunLight);
+            ambientLight = new THREE.AmbientLight(0x404040); scene.add(ambientLight);
             animate();
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            renderer.render(scene, camera);
-        }
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
 
         function updateSunPosition() {
             const slider = document.getElementById('timeSlider');
             if(!slider) return;
             const hour = parseFloat(slider.value);
-            
-            const h = Math.floor(hour);
-            const m = Math.floor((hour - h) * 60);
+            const h = Math.floor(hour); const m = Math.floor((hour - h) * 60);
             const ampm = h >= 12 ? 'PM' : 'AM';
             const fmtHour = h > 12 && h !== 12 ? h - 12 : (h === 0 || h === 24 ? 12 : h);
             document.getElementById('timeDisplay').innerText = `${fmtHour}:${m.toString().padStart(2, '0')} ${ampm}`;
-
             const angle = (hour - 12) * (Math.PI / 12); 
-            const radius = 8;
-            sunLight.position.x = Math.sin(angle) * radius; 
-            sunLight.position.y = Math.cos(angle) * radius;
-
-            if (hour < 6.5 || hour > 17.5) {
-                ambientLight.intensity = 0.2; sunLight.intensity = 0.2;
-            } else {
-                ambientLight.intensity = 0.5; sunLight.intensity = 1.2;
-            }
-
-            if (isAutoTilt && panel) {
-                panel.rotation.z = -angle;
-            } else if (panel) {
-                panel.rotation.z = 0;
-            }
+            sunLight.position.x = Math.sin(angle) * 8; sunLight.position.y = Math.cos(angle) * 8;
+            if (hour < 6.5 || hour > 17.5) { ambientLight.intensity = 0.2; sunLight.intensity = 0.2; }
+            else { ambientLight.intensity = 0.5; sunLight.intensity = 1.2; }
+            if (isAutoTilt && panel) panel.rotation.z = -angle;
+            else if (panel) panel.rotation.z = 0;
         }
 
-        function toggleAutoTilt() {
-            isAutoTilt = document.getElementById('autoTiltToggle').checked;
-            updateSunPosition();
-        }
+        function toggleAutoTilt() { isAutoTilt = document.getElementById('autoTiltToggle').checked; updateSunPosition(); }
 
         function update3DFromSliders() {
             if (!panel) return;
             const dustLevel = parseFloat(document.getElementById('dust_index').value);
-            const cleanColor = new THREE.Color(0x0d6efd); 
-            const dustColor = new THREE.Color(0x8b7355); 
-            panel.material.color.lerpColors(cleanColor, dustColor, dustLevel);
+            panel.material.color.lerpColors(new THREE.Color(0x0d6efd), new THREE.Color(0x8b7355), dustLevel);
         }
 
         function updateColorByEfficiency(efficiency) {
             if (!panel) return;
-            panel.material.emissiveIntensity = 0;
-            panel.material.emissive.setHex(0x000000);
-
-            if (efficiency < 0.70) {
-                panel.material.emissive.setHex(0xdc3545); 
-                panel.material.emissiveIntensity = 0.4; 
-            } else if (efficiency > 0.85) {
-                panel.material.emissive.setHex(0x198754); 
-                panel.material.emissiveIntensity = 0.3;
-            }
+            panel.material.emissiveIntensity = 0; panel.material.emissive.setHex(0x000000);
+            if (efficiency < 0.70) { panel.material.emissive.setHex(0xdc3545); panel.material.emissiveIntensity = 0.4; }
+            else if (efficiency > 0.85) { panel.material.emissive.setHex(0x198754); panel.material.emissiveIntensity = 0.3; }
         }
 
-        // --- 4. APP LOGIC ---
+        // --- APP LOGIC (Preserved) ---
         function fetchLocalWeather() {
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    
-                    if(map) {
-                        map.setView([lat, lon], 10);
-                        if(marker) marker.setLatLng([lat, lon]);
-                        else marker = L.marker([lat, lon]).addTo(map);
-                    }
+                    const lat = position.coords.latitude; const lon = position.coords.longitude;
+                    if(map) { map.setView([lat, lon], 10); if(marker) marker.setLatLng([lat, lon]); else marker = L.marker([lat, lon]).addTo(map); }
                     fetchWeatherData(lat, lon);
                 });
             } else { alert("Geolocation not allowed."); }
@@ -586,88 +560,39 @@
 
         document.getElementById('predictForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
             const data = {
                 temperature: parseFloat(document.getElementById('temperature').value),
                 humidity: parseFloat(document.getElementById('humidity').value),
                 irradiance: parseFloat(document.getElementById('irradiance').value),
                 dust_index: parseFloat(document.getElementById('dust_index').value)
             };
-
             try {
-                const res = await fetch('http://localhost:5001/predict', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(data)
-                });
+                const res = await fetch('http://localhost:5001/predict', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 const result = await res.json();
-                
                 document.getElementById('resultsSection').style.display = 'block';
-                document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
-
-                displayResults(result);
-                updateROI(result.predicted_efficiency);
-                updateColorByEfficiency(result.predicted_efficiency);
-
-            } catch (err) {
-                console.error(err);
-                alert("Server error. Check Flask console.");
-            }
+                displayResults(result); updateROI(result.predicted_efficiency); updateColorByEfficiency(result.predicted_efficiency);
+            } catch (err) { alert("Server error. Check Flask console."); }
         });
 
         function displayResults(result) {
             const eff = (result.predicted_efficiency * 100).toFixed(1);
             document.getElementById('efficiencyValue').innerText = eff + "%";
-            document.getElementById('efficiencyBadge').innerHTML = result.predicted_efficiency > 0.75 
-                ? '<span class="status-badge status-success">OPTIMAL</span>'
-                : '<span class="status-badge status-danger">ATTENTION</span>';
-
+            document.getElementById('efficiencyBadge').innerHTML = result.predicted_efficiency > 0.75 ? '<span class="status-badge status-success">OPTIMAL</span>' : '<span class="status-badge status-danger">ATTENTION</span>';
             document.getElementById('riskValue').innerText = result.risk_score + "%";
-            document.getElementById('riskBadge').innerHTML = result.risk_score < 50
-                ? '<span class="status-badge status-success">LOW RISK</span>'
-                : '<span class="status-badge status-warning">HIGH RISK</span>';
-
+            document.getElementById('riskBadge').innerHTML = result.risk_score < 50 ? '<span class="status-badge status-success">LOW RISK</span>' : '<span class="status-badge status-warning">HIGH RISK</span>';
             document.getElementById('actionText').innerText = result.recommended_action;
-
-            const suitHtml = result.suitability === 'Yes'
-                ? '<span class="status-badge status-success fs-6"><i class="fas fa-check-circle"></i> Site Suitable</span>'
-                : '<span class="status-badge status-danger fs-6"><i class="fas fa-times-circle"></i> Site Not Suitable</span>';
-            document.getElementById('suitabilityBadge').innerHTML = suitHtml;
-
+            document.getElementById('suitabilityBadge').innerHTML = result.suitability === 'Yes' ? '<span class="status-badge status-success fs-6">Site Suitable</span>' : '<span class="status-badge status-danger fs-6">Not Suitable</span>';
             const insightsContainer = document.getElementById('insightsText');
-            let insightsText = result.insights_and_suggestions;
-            const lines = insightsText.split('\n');
-            let htmlContent = '';
-            lines.forEach(line => {
-                if(line.trim().length > 0) htmlContent += `<div class="insight-line"><i class="fas fa-chevron-right text-primary"></i> ${line}</div>`;
-            });
-            insightsContainer.innerHTML = htmlContent;
-
+            insightsContainer.innerHTML = result.insights_and_suggestions.split('\n').map(l => l.trim().length > 0 ? `<div class="insight-line"><i class="fas fa-chevron-right text-primary"></i> ${l}</div>` : '').join('');
             const shapDiv = document.getElementById('shapExplanation');
-            shapDiv.innerHTML = '';
-            const sortedShap = Object.entries(result.explanation).sort((a,b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0,5);
-            sortedShap.forEach(([key, val]) => {
-                const isPos = val > 0;
-                shapDiv.innerHTML += `
-                    <div class="shap-row">
-                        <span class="text-capitalize">${key.replace('_', ' ')}</span>
-                        <span class="${isPos ? 'shap-pos' : 'shap-neg'}">${val > 0 ? '+' : ''}${val.toFixed(4)}</span>
-                    </div>`;
-            });
-
+            shapDiv.innerHTML = Object.entries(result.explanation).sort((a,b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0,5).map(([k, v]) => `
+                <div class="shap-row">
+                    <span class="text-capitalize">${k.replace('_', ' ')}</span>
+                    <span class="${v > 0 ? 'shap-pos' : 'shap-neg'}">${v > 0 ? '+' : ''}${v.toFixed(4)}</span>
+                </div>`).join('');
             const ctx = document.getElementById('efficiencyChart').getContext('2d');
             if(window.effChart) window.effChart.destroy();
-            window.effChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Active Efficiency', 'Loss Factors'],
-                    datasets: [{
-                        data: [result.predicted_efficiency*100, 100-(result.predicted_efficiency*100)],
-                        backgroundColor: ['#198754', '#dc3545'],
-                        borderWidth: 0
-                    }]
-                }
-            });
+            window.effChart = new Chart(ctx, { type: 'doughnut', data: { labels: ['Active', 'Loss'], datasets: [{ data: [result.predicted_efficiency*100, 100-(result.predicted_efficiency*100)], backgroundColor: ['#198754', '#dc3545'], borderWidth: 0 }] } });
         }
     </script>
 </body>
